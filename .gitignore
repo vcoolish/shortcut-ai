@@ -52,7 +52,7 @@ Thumbs.db
 
 # Log and Report files
 *.log
-*.md
+reports/
 
 # API keys
 *.key
