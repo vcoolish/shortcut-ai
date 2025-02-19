@@ -1,0 +1,61 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+dist/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.whl
+MANIFEST.in
+
+# PyInstaller
+#  Adds support for all kinds of Temp-folders
+#  but need to be explicit to not catch e.g. /tmp
+/tmp
+/temp
+**/tmp
+**/temp
+__pycache__/
+dist/
+build/
+*.spec
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# IDEA
+.idea/
+
+# Env files
+.env
+.venv
+venv/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Log and Report files
+*.log
+*.md
+
+# API keys
+*.key
+
+# Compiled files
+*.pyc
