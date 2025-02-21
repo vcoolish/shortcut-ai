@@ -165,12 +165,13 @@ def fetch_epics_updated_on(date: str):
             title = epic.get("name", "Untitled Epic")
             link = epic.get("app_url", "")
             description = epic.get("description", "")
+            target_date = epic.get("deadline", "")
             progress_str = f"{round(progress_percent, 2)}%"
             owner_ids = epic.get("owner_ids", [])
             owner_names = ", ".join(owner_details.get(owner, "Unknown User") for owner in owner_ids)
 
             epic_markdown += (
-                f"- [{title}]({link}) - Progress: {progress_str} complete by *{owner_names}\n" +
+                f"- [{title}]({link}) - Progress: {progress_str} by *{owner_names} targeting {target_date}\n" +
                 f"DESCRIPTION_START\n{description}DESCRIPTION_END\n"
             )
 
@@ -203,14 +204,14 @@ def generate_openai_summary(markdown_report: str):
     }
     prompt = f"""{markdown_report}\n\nMake a nice markdown table for above items grouped by squad and add a summary of what was done
 taking into account added descriptions for each story, update your summaries but don't add the actual descriptions into the report.
-Use emojis to make report nice. 
+Use emojis to make report nice. Make the information clear to non engineering people.
 Explanations in () are for you.
 Structure is following: 
 Summary for all work (TLDR of report):
 Status Breakdown (story count by status):
 Key Highlights (key highlights of updates for the day with context of story Descriptions):
 Work Items Grouped by Squad:
-tables: Task(Title with link to story) - Status - Owner(s)
+tables: Task(Title with link to story) - Status - Owner(s) - Target Date (for epics)
 """
     data = {
         "model": "gpt-4o",
@@ -250,7 +251,7 @@ if __name__ == "__main__":
     epics = fetch_epics_updated_on(date)
     print(epics)
 
-    if not markdown_report:
+    if not story:
         print("No data fetched from Shortcut.")
         sys.exit(1)
 
