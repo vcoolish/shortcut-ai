@@ -14,7 +14,7 @@ SHORTCUT_API_KEY = os.environ["SHORTCUT_API_KEY"]
 BASE_URL = "https://api.app.shortcut.com"
 
 WORKFLOW_STATES = {
-    "500000513": "Done",
+    "500028067": "GO",
 }
 
 TEAM_MAPPING = {
@@ -25,21 +25,6 @@ TEAM_MAPPING = {
     "685e7a04-fa00-4f08-9aaf-720706381dbc": "CoreX Client Team",
     "68637e43-f987-4ecb-989b-a71fd18729ee": "Growth Team",
 }
-# "686377b2-3918-4de2-bd88-924f7cff3374": "Earn Team",
-# "67da9922-f33e-431a-9e40-5cbe4ac48d29": "Banking Team",
-# "6548f4fb-429d-4c55-b2ba-a100128f8dd9": "DevOps Team",
-# "685d209a-04cc-4ec9-9742-49174eae7908": "Activation Team",
-# "67626534-4ccd-4a09-a660-1f7d8667b0e2": "Trading Team",
-# "685e9d52-60c7-4328-9a56-d7d81db4128b": "CoreX Services Team",
-# "685e7a04-fa00-4f08-9aaf-720706381dbc": "CoreX Client Team",
-# "6863d63d-831d-408e-ae35-4a66877d3e88": "CoreX Team",
-# "676265b1-331f-42f4-a7f9-97fe88b1ba60": "WebWallet Team",
-# "68637e43-f987-4ecb-989b-a71fd18729ee": "Growth Team",
-# "65522d8a-a1a4-45b5-8947-ed0bd0096ade": "BD Team",
-# "65559d07-43eb-4de2-a3a0-dc0063b14b07": "Design Team",
-# "676265cd-7cbb-457d-b4fd-8b2827d07ff1": "Foundation Squad",
-# "65559cb8-f0fe-4fa2-b65f-6713ef84e56b": "Marketing Team",
-# "65b6a41b-8430-4775-bd60-33cfb1f54ac9": "QA Team",
 
 
 def get_last_tuesday_utc():
@@ -50,10 +35,11 @@ def get_last_tuesday_utc():
     days_since_tuesday = (now.weekday() - 1) % 7  # Tuesday is 1 (Monday=0)
     if days_since_tuesday == 0 and now.hour == 0 and now.minute == 0:
         # If it's exactly Tuesday 00:00, get the previous Tuesday
-        last_tuesday = now - timedelta(days=7)
+        last_tuesday = now - timedelta(days=6)
     else:
-        last_tuesday = now - timedelta(days=days_since_tuesday + (7 if days_since_tuesday == 0 else 0))
+        last_tuesday = now - timedelta(days=days_since_tuesday + (6 if days_since_tuesday == 0 else 0))
 
+    last_tuesday = now - timedelta(days=7)
     return last_tuesday.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
@@ -80,8 +66,8 @@ def fetch_owner_details(owner_ids):
     return owners
 
 
-def fetch_done_stories_from_last_tuesday():
-    """Fetches stories marked as 'Done' from last Tuesday 00:00 UTC to now.
+def fetch_go_stories_from_last_tuesday():
+    """Fetches stories marked as 'GO' from last Tuesday 00:00 UTC to now.
 
     Returns:
         A Markdown-formatted string containing the stories grouped by team.
@@ -98,18 +84,18 @@ def fetch_done_stories_from_last_tuesday():
     start_date = last_tuesday.strftime("%Y-%m-%d")
     end_date = now.strftime("%Y-%m-%d")
 
-    print(f"Fetching stories marked as 'Done' from {start_date} to {end_date}")
+    print(f"Fetching stories marked as 'GO' from {start_date} to {end_date}")
 
     team_tasks = defaultdict(list)
     owner_ids_set = set()
 
     # Instead of searching by update date, let's search by completion date and state
     # We'll use a more specific query to reduce results
-    done_state_id = "500000513"  # The 'Done' state ID
+    go_state_id = "500028067"  # The 'Done' state ID
 
     # First, let's try to fetch stories that are currently in 'Done' state
     # and filter by completion date client-side
-    url = f"{BASE_URL}/api/v3/search/stories?query=state%3A{done_state_id}&detail=full"
+    url = f"{BASE_URL}/api/v3/search/stories?query=state%3A{go_state_id}&detail=full"
 
     page_count = 0
     max_pages = 10  # Limit to prevent infinite loops
@@ -214,7 +200,7 @@ def fetch_done_stories_alternative_approach(start_date, end_date):
 
     team_tasks = defaultdict(list)
     owner_ids_set = set()
-    done_state_id = "500000513"
+    go_state_id = "500028067"
 
     last_tuesday = get_last_tuesday_utc()
     now = datetime.utcnow()
@@ -224,7 +210,7 @@ def fetch_done_stories_alternative_approach(start_date, end_date):
         print(f"Fetching stories for {team_name}...")
 
         # Search for done stories in this specific team
-        url = f"{BASE_URL}/api/v3/search/stories?query=state%3A{done_state_id}+group%3A{team_id}&detail=full"
+        url = f"{BASE_URL}/api/v3/search/stories?query=state%3A{go_state_id}+group%3A{team_id}&detail=full"
 
         try:
             response = requests.get(url, headers=headers)
@@ -378,15 +364,25 @@ def generate_release_notes(categorized_stories):
 
 {stories_text}
 
-Please create release notes that:
-1. Are written for end users (non-technical language)
-2. Focus on user benefits and improvements
-3. Group related features together
-4. Use bullet points for easy reading
-5. Include emojis to make it engaging
-6. Avoid technical jargon and internal team references
+You are an expert in marketing and product development for the crypto industry, 
+specializing in enhancing release notes for Trust Wallet products. 
+Your role is to emulate the style of Apple’s release notes, focusing on clear, structured content with specific 
+feature highlights in a user-friendly presentation. Organize the notes into distinct sections: 
+Features, Security Enhancements, and Bug Fixes. For the Features section, begin each point with a clear 
+subtitle and ensure the subtitle and bullet point are on the same line. Pay special attention to the "feat" 
+label from Github commits; they should all be included in the Features section. Do not include subtitles for 
+Security Enhancements and Bug Fixes to maintain simplicity. Feature descriptions should not end with commit IDs. 
+Use engaging and concise descriptions for new features, and prominently highlight improvements 
+in accessibility and usability. Detail important technical and security updates in an informative yet accessible way
+for non-technical users. Mention any regional or device-specific limitations or availability, similar
+to Apple's style, to manage user expectations. Maintain a professional and neutral tone in the writing, 
+avoiding the use of 'we'. 
+Android release notes have limit of 500 characters.
+iOS and Extension release notes have limit of 1000 characters.
+Do not add any markdown formatting for release notes.
+Please create release notes:
 
-Format the response as a clean markdown section for {platform.upper()} release notes."""
+Format the response as a clean output for {platform.upper()} release notes."""
 
         data = {
             "model": "gemini-2.0-flash",
@@ -467,12 +463,14 @@ Use emojis to make the report engaging and ensure the language is accessible to 
 
 if __name__ == "__main__":
     # Fetch stories marked as 'Done' from last Tuesday to now
-    stories_report = fetch_done_stories_from_last_tuesday()
+    stories_report = fetch_go_stories_from_last_tuesday()
     print(stories_report)
 
     if not stories_report:
         print("No data fetched from Shortcut.")
         sys.exit(1)
+
+    final_report = stories_report
 
     # Generate main summary
     openai_summary = generate_openai_summary(stories_report)
@@ -497,7 +495,7 @@ if __name__ == "__main__":
     os.makedirs(reports_dir, exist_ok=True)
 
     last_tuesday = get_last_tuesday_utc()
-    filename = os.path.join(reports_dir, f"weekly_release_{last_tuesday.strftime('%Y-%m-%d')}.md")
+    filename = os.path.join(reports_dir, f"weekly_go_{last_tuesday.strftime('%Y-%m-%d')}.md")
 
     try:
         with open(filename, "w") as f:
