@@ -10,6 +10,8 @@ load_dotenv()
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 OPENAI_ORG_KEY = os.environ["OPENAI_ORG_KEY"]
 SHORTCUT_API_KEY = os.environ["SHORTCUT_API_KEY"]
+PORTKEY_API_KEY = os.environ["PORTKEY_API_KEY"]
+GOOGLE_VIRTUAL_KEY = os.environ["GOOGLE_VIRTUAL_KEY"]
 
 BASE_URL = "https://api.app.shortcut.com"
 
@@ -66,8 +68,89 @@ def fetch_owner_details(owner_ids):
     return owners
 
 
-def fetch_go_stories_from_last_tuesday():
-    """Fetches stories marked as 'GO' from last Tuesday 00:00 UTC to now.
+def parse_date(date_str):
+    """Parses a date string from Shortcut API into a timezone-aware datetime."""
+    if not date_str:
+        return None
+    try:
+        if date_str.endswith('Z'):
+            return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        elif '+' in date_str or date_str.endswith('UTC'):
+            return datetime.fromisoformat(date_str.replace('UTC', '+00:00'))
+        else:
+            return datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return None
+
+
+def fetch_go_epics_from_last_tuesday():
+    """Fetches epics marked as 'Done' from last Tuesday 00:00 UTC to now."""
+    headers = {
+        "Content-Type": "application/json",
+        "Shortcut-Token": SHORTCUT_API_KEY,
+    }
+
+    last_tuesday = get_last_tuesday_utc()
+    now = datetime.now(timezone.utc)
+    completed_epics = defaultdict(list)
+    owner_ids_set = set()
+
+    print("Fetching completed epics...")
+    url = f"{BASE_URL}/api/v3/search/epics?query=state%3A%22Done%22"
+
+    page_count = 0
+    max_pages = 10 # To prevent infinite loops
+
+    while url and page_count < max_pages:
+        try:
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            epics = data.get("data", [])
+
+            for epic in epics:
+                completed_at = epic.get("completed_at")
+                completion_date = parse_date(completed_at)
+
+                if completion_date and last_tuesday <= completion_date <= now:
+                    team_name = "Unknown Squad"
+                    # Find associated team by looking at the stories within the epic
+                    story_urls = epic.get("stories", [])
+                    if story_urls:
+                        # Fetch one story to determine the team
+                        first_story_url = f"{BASE_URL}{story_urls[0]['url']}"
+                        story_response = requests.get(first_story_url, headers=headers)
+                        if story_response.status_code == 200:
+                            story_data = story_response.json()
+                            group_id = story_data.get("group_id")
+                            if group_id in TEAM_MAPPING:
+                                team_name = TEAM_MAPPING[group_id]
+
+                    owner_ids = epic.get("owner_ids", [])
+                    owner_ids_set.update(owner_ids)
+
+                    epic_title = epic["name"]
+                    app_url = epic["app_url"]
+                    description = epic.get("description", "")
+
+                    completed_epics[team_name].append(
+                        (epic_title, app_url, owner_ids, description)
+                    )
+
+            next_page = data.get("next")
+            url = f"{BASE_URL}{next_page}" if next_page else None
+            page_count += 1
+
+        except requests.exceptions.RequestException as e:
+            print(f"Request error fetching epics: {e}")
+            return {}, set()
+
+    print(f"Found {sum(len(epics) for epics in completed_epics.values())} completed epics.")
+    return completed_epics, owner_ids_set
+
+
+def fetch_go_stories_and_epics_from_last_tuesday():
+    """Fetches stories and epics marked as 'GO' or 'Done' from last Tuesday 00:00 UTC to now.
 
     Returns:
         A Markdown-formatted string containing the stories grouped by team.
@@ -89,12 +172,8 @@ def fetch_go_stories_from_last_tuesday():
     team_tasks = defaultdict(list)
     owner_ids_set = set()
 
-    # Instead of searching by update date, let's search by completion date and state
-    # We'll use a more specific query to reduce results
-    go_state_id = "500028067"  # The 'Done' state ID
+    go_state_id = "500028067"
 
-    # First, let's try to fetch stories that are currently in 'Done' state
-    # and filter by completion date client-side
     url = f"{BASE_URL}/api/v3/search/stories?query=state%3A{go_state_id}&detail=full"
 
     page_count = 0
@@ -171,20 +250,40 @@ def fetch_go_stories_from_last_tuesday():
 
     print(f"Found {sum(len(tasks) for tasks in team_tasks.values())} completed stories")
 
+    # Fetch and combine epic data
+    completed_epics, epic_owner_ids = fetch_go_epics_from_last_tuesday()
+    owner_ids_set.update(epic_owner_ids)
+
     owner_details = fetch_owner_details(owner_ids_set)
 
     markdown_output = f"# Weekly Release Report\n"
     markdown_output += f"**Period:** {start_date} to {end_date}\n\n"
 
-    for team, tasks in team_tasks.items():
-        if tasks:  # Only show teams with completed tasks
-            markdown_output += f"## {team}\n\n"
-            for title, url, state, owners, description in tasks:
-                owner_names = ", ".join(
-                    owner_details.get(owner, "Unknown User") for owner in owners
-                )
+    # Add Completed Epics section
+    markdown_output += f"## Completed Epics\n\n"
+    if not any(completed_epics.values()):
+        markdown_output += "No epics were completed this week.\n\n"
+    else:
+        for team, epics in completed_epics.items():
+            for title, url, owners, description in epics:
+                owner_names = ", ".join(owner_details.get(owner, "Unknown User") for owner in owners)
                 markdown_output += f"- [{title}]({url})\n"
             markdown_output += "\n"
+
+    markdown_output += "---\n\n"
+
+    # Add Completed Stories section
+    markdown_output += f"## Completed Stories by Team\n\n"
+    if not any(team_tasks.values()):
+        markdown_output += "No stories were completed this week.\n\n"
+    else:
+        for team, tasks in team_tasks.items():
+            if tasks:
+                markdown_output += f"### {team}\n\n"
+                for title, url, state, owners, description in tasks:
+                    owner_names = ", ".join(owner_details.get(owner, "Unknown User") for owner in owners)
+                    markdown_output += f"- [{title}]({url})\n"
+                markdown_output += "\n"
 
     return markdown_output
 
@@ -205,11 +304,9 @@ def fetch_done_stories_alternative_approach(start_date, end_date):
     last_tuesday = get_last_tuesday_utc()
     now = datetime.utcnow()
 
-    # Fetch stories for each team separately to avoid hitting the limit
     for team_id, team_name in TEAM_MAPPING.items():
         print(f"Fetching stories for {team_name}...")
 
-        # Search for done stories in this specific team
         url = f"{BASE_URL}/api/v3/search/stories?query=state%3A{go_state_id}+group%3A{team_id}&detail=full"
 
         try:
@@ -263,6 +360,9 @@ def fetch_done_stories_alternative_approach(start_date, end_date):
             print(f"Request error for {team_name}: {e}")
             continue
 
+    completed_epics, epic_owner_ids = fetch_go_epics_from_last_tuesday()
+    owner_ids_set.update(epic_owner_ids)
+
     print(f"Found {sum(len(tasks) for tasks in team_tasks.values())} completed stories using alternative approach")
 
     owner_details = fetch_owner_details(owner_ids_set)
@@ -270,13 +370,27 @@ def fetch_done_stories_alternative_approach(start_date, end_date):
     markdown_output = f"# Weekly Release Report\n"
     markdown_output += f"**Period:** {start_date} to {end_date}\n\n"
 
+    # Add Completed Epics section
+    markdown_output += f"## Completed Epics\n\n"
+    if not any(completed_epics.values()):
+        markdown_output += "No epics were completed this week.\n\n"
+    else:
+        for team, epics in completed_epics.items():
+            markdown_output += f"### {team}\n\n"
+            for title, url, owners, description in epics:
+                owner_names = ", ".join(owner_details.get(owner, "Unknown User") for owner in owners)
+                markdown_output += f"- [{title}]({url})\n"
+            markdown_output += "\n"
+
+    markdown_output += "---\n\n"
+
+    # Add Completed Stories section
+    markdown_output += f"## Completed Stories by Team\n\n"
     for team, tasks in team_tasks.items():
-        if tasks:  # Only show teams with completed tasks
-            markdown_output += f"## {team}\n\n"
+        if tasks:
+            markdown_output += f"### {team}\n\n"
             for title, url, state, owners, description in tasks:
-                owner_names = ", ".join(
-                    owner_details.get(owner, "Unknown User") for owner in owners
-                )
+                owner_names = ", ".join(owner_details.get(owner, "Unknown User") for owner in owners)
                 markdown_output += f"- [{title}]({url})\n"
             markdown_output += "\n"
 
@@ -292,7 +406,6 @@ def categorize_stories_by_platform(markdown_report: str):
     Returns:
         A dictionary with platform categories and their stories
     """
-    # Keywords to identify platform-specific stories
     platform_keywords = {
         "extension": ["extension", "chrome", "firefox", "browser", "popup", "content script", "web extension"],
         "ios": ["ios", "iphone", "ipad", "swift", "xcode", "app store", "cocoapods"],
@@ -306,18 +419,14 @@ def categorize_stories_by_platform(markdown_report: str):
         "other": []
     }
 
-    # Parse the markdown to extract story information
     lines = markdown_report.split('\n')
     current_team = ""
 
     for line in lines:
-        if line.startswith('## '):
-            current_team = line[3:].strip()
+        if line.startswith('### '):
+            current_team = line[4:].strip()
         elif line.startswith('- ['):
-            # Extract story title and URL
-            story_info = line[2:].strip()  # Remove '- '
-
-            # Categorize based on keywords in title
+            story_info = line[2:].strip()
             story_lower = story_info.lower()
             categorized_story = False
 
@@ -334,18 +443,11 @@ def categorize_stories_by_platform(markdown_report: str):
 
 
 def generate_release_notes(categorized_stories):
-    """Generates release notes for each platform using OpenAI.
-
-    Args:
-        categorized_stories: Dictionary with platform categories and their stories
-
-    Returns:
-        A string containing the OpenAI-generated release notes for all platforms.
-    """
+    """Generates release notes for each platform using OpenAI."""
 
     headers = {
-        "x-portkey-api-key": os.environ["PORTKEY_API_KEY"],
-        "x-portkey-virtual-key": os.environ["GOOGLE_VIRTUAL_KEY"],
+        "x-portkey-api-key": PORTKEY_API_KEY,
+        "x-portkey-virtual-key": GOOGLE_VIRTUAL_KEY,
         "Content-Type": "application/json",
     }
 
@@ -356,7 +458,7 @@ def generate_release_notes(categorized_stories):
             continue
 
         if platform == "other":
-            continue  # Skip 'other' category for release notes
+            continue
 
         stories_text = "\n".join(stories)
 
@@ -378,9 +480,17 @@ for non-technical users. Mention any regional or device-specific limitations or 
 to Apple's style, to manage user expectations. Maintain a professional and neutral tone in the writing, 
 avoiding the use of 'we'. 
 Android release notes have limit of 500 characters.
-iOS and Extension release notes have limit of 1000 characters.
-Do not add any markdown formatting for release notes.
+iOS and Extension release notes have limit of 700 characters.
+Do not add any markdown formatting for release notes, just add line breaks or industry standard formatting for better readability.
 Please create release notes:
+## Extension
+[EXTENSION NOTES HERE]
+
+## iOS
+[IOS NOTES HERE]
+
+## Android
+[ANDROID NOTES HERE]
 
 Format the response as a clean output for {platform.upper()} release notes."""
 
@@ -397,9 +507,7 @@ Format the response as a clean output for {platform.upper()} release notes."""
                 headers=headers,
                 json=data,
             )
-            print(response.headers)
             response.raise_for_status()
-            print(response.json())
             platform_notes = response.json()["choices"][0]["message"]["content"]
             release_notes += f"\n{platform_notes}\n\n"
         except requests.exceptions.RequestException as e:
@@ -410,22 +518,14 @@ Format the response as a clean output for {platform.upper()} release notes."""
 
 
 def generate_openai_summary(markdown_report: str):
-    """Generates a summary of the weekly release report using OpenAI's GPT-4o model.
-
-    Args:
-        markdown_report: The Markdown-formatted report to summarize.
-
-    Returns:
-        A string containing the OpenAI-generated summary.
-    """
-    openai_api_key = OPENAI_API_KEY
-    if not openai_api_key:
+    """Generates a summary of the weekly release report using OpenAI's GPT-4o model."""
+    if not OPENAI_API_KEY:
         print("Error: OPENAI_API_KEY not set.")
         return None
 
     headers = {
-        "x-portkey-api-key": os.environ["PORTKEY_API_KEY"],
-        "x-portkey-virtual-key": os.environ["GOOGLE_VIRTUAL_KEY"],
+        "x-portkey-api-key": PORTKEY_API_KEY,
+        "x-portkey-virtual-key": GOOGLE_VIRTUAL_KEY,
         "Content-Type": "application/json",
     }
 
@@ -434,8 +534,8 @@ def generate_openai_summary(markdown_report: str):
 Please create a comprehensive weekly release summary with the following structure:
 
 1. **Executive Summary** (2-3 sentences overview of the week's achievements)
-2. **Team Contributions** (summary of work completed by each team)
-3. **Key Deliverables** (highlight major features or fixes completed)
+2. **Key Epics** (summary of work completed at the epic level)
+3. **Team Contributions** (summary of stories completed by each team)
 4. **Platform Breakdown** (if applicable, categorize work by platform)
 
 Use emojis to make the report engaging and ensure the language is accessible to both technical and non-technical stakeholders."""
@@ -453,7 +553,6 @@ Use emojis to make the report engaging and ensure the language is accessible to 
             headers=headers,
             json=data,
         )
-        print(response.headers)
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
     except requests.exceptions.RequestException as e:
@@ -462,9 +561,7 @@ Use emojis to make the report engaging and ensure the language is accessible to 
 
 
 if __name__ == "__main__":
-    # Fetch stories marked as 'Done' from last Tuesday to now
-    stories_report = fetch_go_stories_from_last_tuesday()
-    print(stories_report)
+    stories_report = fetch_go_stories_and_epics_from_last_tuesday()
 
     if not stories_report:
         print("No data fetched from Shortcut.")
@@ -472,15 +569,12 @@ if __name__ == "__main__":
 
     final_report = stories_report
 
-    # Generate main summary
     openai_summary = generate_openai_summary(stories_report)
     print(openai_summary)
 
-    # Categorize stories by platform and generate release notes
     categorized_stories = categorize_stories_by_platform(stories_report)
     release_notes = generate_release_notes(categorized_stories)
 
-    # Combine all reports
     final_report = ""
     if openai_summary:
         final_report += openai_summary + "\n\n"
@@ -490,7 +584,6 @@ if __name__ == "__main__":
     if release_notes:
         final_report += release_notes
 
-    # Save the report
     reports_dir = "reports"
     os.makedirs(reports_dir, exist_ok=True)
 
